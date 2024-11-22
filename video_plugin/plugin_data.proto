@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package tensorboard;
+
+// Video summaries created by the `tensorboard.plugins.video.summary`
+// module will include `SummaryMetadata` whose `plugin_data` field has
+// as `content` a binary string that is the encoding of an
+// `VideoPluginData` proto.
+message VideoPluginData {
+  // Version `0` is the only supported version.
+  int32 version = 1;
+
+  // Indicates whether this time series data was originally represented
+  // as `Summary.Value.Video` values and has been automatically
+  // converted to bytestring tensors.
+  bool converted_to_tensor = 2;
+}
