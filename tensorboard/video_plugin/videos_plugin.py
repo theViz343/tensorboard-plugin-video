@@ -91,9 +91,10 @@ class VideosPlugin(base_plugin.TBPlugin):
         tag = request.args.get("tag")
         run = request.args.get("run")
         sample = int(request.args.get("sample", 2))
+        batch_size_idx = int(request.args.get("batch_size", 1))
         try:
             response = self._video_response_for_run(
-                ctx, experiment, run, tag, sample
+                ctx, experiment, run, tag, sample, batch_size_idx
             )
         except KeyError:
             return http_util.Respond(
@@ -101,7 +102,7 @@ class VideosPlugin(base_plugin.TBPlugin):
             )
         return http_util.Respond(request, response, "application/json")
 
-    def _video_response_for_run(self, ctx, experiment, run, tag, sample):
+    def _video_response_for_run(self, ctx, experiment, run, tag, sample, batch_size_idx):
         all_videos = self._data_provider.read_blob_sequences(
             ctx,
             experiment_id=experiment,
@@ -118,22 +119,29 @@ class VideosPlugin(base_plugin.TBPlugin):
             {
                 "wall_time": datum.wall_time,
                 "step": datum.step,
+                "batch_size": int(self._get_sample_at_index(ctx, datum, batch_size_idx)),
                 "query": self._data_provider_query(datum.values[sample]),
             }
             for datum in videos
             if len(datum.values) > sample
         ]
 
+    def _get_sample_at_index(self, ctx, datum, index):
+        return self._data_provider.read_blob(ctx, blob_key=datum.values[index].blob_key)
+
     def _data_provider_query(self, blob_reference):
         return urllib.parse.urlencode({"blob_key": blob_reference.blob_key})
 
     @wrappers.Request.application
     def _serve_individual_video(self, request):
-        """Serves an individual video."""
+        """Serves an individual video track."""
         try:
             ctx = plugin_util.context(request.environ)
             blob_key = request.args["blob_key"]
+            track_number = int(request.args["track_number"])
             data = self._data_provider.read_blob(ctx, blob_key=blob_key)
+            track_data = self._split_video_data(data)[track_number]
+            return http_util.Respond(request, track_data, _VIDEO_MIMETYPE)
         except (KeyError, IndexError):
             return http_util.Respond(
                 request,
@@ -141,7 +149,52 @@ class VideosPlugin(base_plugin.TBPlugin):
                 "text/plain",
                 code=400,
             )
-        return http_util.Respond(request, data, _VIDEO_MIMETYPE)
+
+    def _split_video_data(self, mp4_data):
+        import ffmpeg
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+            temp_file.write(mp4_data)
+            temp_path = temp_file.name
+
+        try:
+            probe = ffmpeg.probe(temp_path)
+            video_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'video']
+            separate_videos = []
+            for stream in video_streams:
+                with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as out_file:
+                    out_path = out_file.name
+                try:
+                    stream = (
+                        ffmpeg
+                        .input(temp_path)
+                        .output(out_path, map=f"0:{stream['index']}", codec='copy')
+                        .overwrite_output()
+                    )
+                    stream.run(capture_stdout=True, capture_stderr=True)
+                    with open(out_path, 'rb') as f:
+                        separate_videos.append(f.read())
+                except ffmpeg.Error as e:
+                    print(f"FFmpeg stderr:\n{e.stderr.decode()}")
+                    raise
+                finally:
+                    try:
+                        os.unlink(out_path)
+                    except:
+                        pass
+            return separate_videos if separate_videos else [mp4_data]  # Fallback
+
+        except Exception as e:
+            print(f"Error processing video: {str(e)}")
+            return [mp4_data]
+
+        finally:
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
 
     @wrappers.Request.application
     def _serve_tags(self, request):
