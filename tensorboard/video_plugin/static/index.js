@@ -172,17 +172,25 @@ export async function render() {
   function createVideoCards({run, tag, videos, metadata}) {
     return videos.map(video => 
       createElement('div', { className: 'video-card', 'data-tag': tag }, [
-        createElement('video', {
-          className: 'tensor-video',
-          controls: true,
-          loop: true,
-          src: `./individualVideo?${video.query}`,
-        }),
+        createElement('div', {
+          className: 'video-row',
+          style: 'display: grid; grid-template-columns: repeat(' + video.batch_size + ', 1fr); gap: 10px;'
+        },
+          Array.from({ length: video.batch_size }, (_, track_number) =>
+            createElement('video', {
+              className: 'tensor-video',
+              controls: true,
+              loop: true,
+              src: `./individualVideo?${video.query}&track_number=${track_number}`,
+            })
+          )
+        ),
         createElement('div', { className: 'video-info' }, [
           createElement('div', `Run: ${run}`),
           createElement('div', `Tag: ${tag}`),
           createElement('div', `Step: ${video.step}`),
           createElement('div', `Wall Time: ${new Date(video.wall_time * 1000).toLocaleString()}`),
+          createElement('div', `Batch Size: ${video.batch_size}`),
           metadata.description && createElement('div', `Description: ${metadata.description}`),
         ]),
       ])
